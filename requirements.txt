@@ -1,0 +1,13 @@
+# ST2(펭귄 대시보드) 전용 최소 requirements — Streamlit Community Cloud 배포용
+# 절차·체크리스트는 ST5 교안(배포와 미니프로젝트) 참고. 이 파일은 "grab & deploy"용 준비물이다.
+#
+# [왜 최소인가] 프로젝트 전체 requirements.txt엔 torch·torchvision·transformers·openai가 들어 있어
+#   무료티어 메모리(690MB~2.7GB 범위)를 잡아먹는다. ST2(m3_penguins)는 scikit-learn만 쓰므로 아래 6개면 충분하다.
+#   torch가 없으니 CPU 휠 인덱스(--extra-index-url .../whl/cpu)도 불필요하다.
+# [업로드] apps/m3_penguins.py + 이 requirements.txt + deploy/packages.txt 를 GitHub에 "개별 선택" 업로드.
+streamlit==1.59.1
+pandas==2.3.3
+numpy==2.4.4
+scikit-learn==1.9.0
+seaborn==0.13.2
+matplotlib==3.10.8
