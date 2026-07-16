@@ -1,4 +1,4 @@
-# ST2 — 시각화·EDA 대시보드: 팔머펭귄 종 분류기
+# ST2 — 시각화·EDA 대시보드: 와인 품종 분류기
 # [왜] 노트북은 만든 사람만 본다. 슬라이더로 트리 개수·깊이를 바꿔가며 정확도·혼동행렬이
 #      실시간으로 바뀌는 것을 "체감"하는 순간, 시각화는 커뮤니케이션 도구가 된다.
 # [흐름] 12~13강에서 배운 혼동행렬(confusion matrix)·과적합(overfitting) 개념의 웹 버전
@@ -10,11 +10,11 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import streamlit as st
+from sklearn.datasets import load_wine
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.inspection import permutation_importance
 from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
-from sklearn.preprocessing import LabelEncoder
 from sklearn.tree import DecisionTreeClassifier
 
 # [왜] matplotlib 기본 폰트(DejaVu Sans)엔 한글 글리프가 없어 "예측/실제" 같은 라벨이 □□로 깨진다.
@@ -28,32 +28,37 @@ for _f in ["AppleGothic", "Malgun Gothic", "NanumGothic", "NanumBarunGothic"]:
         break
 plt.rcParams["axes.unicode_minus"] = False  # 한글 폰트 사용 시 마이너스 기호(−)가 깨지는 것 방지
 
-# [왜] 4개 수치형 특징만 모델 입력으로 쓴다 — species·island·sex 등 범주형은
+# [왜] 13개 화학 성분 중 품종을 잘 가르는 4개만 모델 입력으로 쓴다 — 나머지 9개는
 #      이번 데모의 스코프 밖(간단한 4특징 분류기로 유지).
-FEATURES = ["bill_length_mm", "bill_depth_mm", "flipper_length_mm", "body_mass_g"]
+FEATURES = ["alcohol", "malic_acid", "color_intensity", "flavanoids"]
 
 
 # [왜] cache_data — 데이터는 호출마다 "복사본"을 돌려준다. 화면 곳곳에서 df를 자유롭게
 #      다뤄도(정렬·필터) 원본 캐시가 오염되지 않는다. (위 4절에서 배운 그 데코레이터)
 @st.cache_data
 def load_data():
-    return sns.load_dataset("penguins").dropna()
+    # [왜] sklearn 내장 데이터라 인터넷 연결 없이도 로드된다 — seaborn의 penguins처럼
+    #      GitHub에서 CSV를 받아오지 않으므로 Streamlit Cloud 배포 시 네트워크 이슈가 없다.
+    raw = load_wine()
+    df = pd.DataFrame(raw.data, columns=raw.feature_names)
+    df["cultivar"] = pd.Categorical.from_codes(raw.target, raw.target_names)
+    return df
 
 
 # [왜] cache_resource — 모델은 "리소스"라 싱글턴으로 공유한다. 슬라이더가 같은 값 조합으로
 #      돌아오면(예: 옆 탭 갔다가 다시 옴) 재학습 없이 캐시된 모델을 그대로 재사용한다.
-# [흐름] 344행짜리 데이터라 어차피 수십 ms지만, 100만 행이면 이 캐시가 응답속도를 가른다.
+# [흐름] 178행짜리 데이터라 어차피 수십 ms지만, 100만 행이면 이 캐시가 응답속도를 가른다.
 # [통계] train_model은 st 부작용 없는 순수 함수 — df를 인자로 받아 테스트에서 바로 호출 가능.
 @st.cache_resource
 def train_model(df, model_type, n_estimators, max_depth):
     df = df.dropna()
-    # [왜] sklearn 분류기는 문자열 라벨을 직접 못 받는다 — species 텍스트를 숫자
-    #      인덱스로 바꿔야(LabelEncoder) fit/predict에 넣을 수 있다.
-    le = LabelEncoder()
     X = df[FEATURES]
-    y = le.fit_transform(df["species"])
-    # [왜] stratify=y — 종(species)별 비율을 train/test에 동일하게 유지한다.
-    #      층화 없이 나누면 소수 종이 test에 몰리거나 아예 빠질 수 있다.
+    # [왜] cultivar가 이미 Categorical이라 .cat.codes로 바로 숫자 라벨을 얻는다 —
+    #      penguins의 LabelEncoder와 동일한 역할.
+    y = df["cultivar"].cat.codes.to_numpy()
+    classes = df["cultivar"].cat.categories
+    # [왜] stratify=y — 품종(cultivar)별 비율을 train/test에 동일하게 유지한다.
+    #      층화 없이 나누면 소수 품종이 test에 몰리거나 아예 빠질 수 있다.
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.25, random_state=42, stratify=y
     )
@@ -90,15 +95,15 @@ def train_model(df, model_type, n_estimators, max_depth):
     cv_mean = cv_scores.mean()
     cv_std = cv_scores.std()
 
-    # [왜] impurity 기반 feature_importances_는 상관된 특징(flipper·body_mass, 상관 0.87)
-    #      끼리 중요도를 임의로 나눠 가져 왜곡된다 — held-out permutation importance가
-    #      "이 특징을 섞으면 정확도가 얼마나 떨어지는가"를 직접 재서 더 정직하다.
+    # [왜] impurity 기반 feature_importances_는 상관된 특징끼리 중요도를 임의로 나눠
+    #      가져 왜곡된다 — held-out permutation importance가 "이 특징을 섞으면 정확도가
+    #      얼마나 떨어지는가"를 직접 재서 더 정직하다.
     perm = permutation_importance(model, X_test, y_test, n_repeats=20, random_state=42)
     perm_importance = dict(zip(FEATURES, perm.importances_mean))
 
     return {
         "model": model,
-        "le": le,
+        "classes": classes,
         "cm": cm,
         "train_acc": train_acc,
         "test_acc": test_acc,
@@ -111,8 +116,8 @@ def train_model(df, model_type, n_estimators, max_depth):
 def main():
     # [왜] set_page_config는 스크립트 최상단에서 한 번만 호출 가능 — layout="wide"로
     #      탭·컬럼이 좁은 화면에서도 잘리지 않게 미리 넓게 잡아둔다.
-    st.set_page_config(page_title="펭귄 종 분류기", page_icon="🐧", layout="wide")
-    st.title("🐧 팔머펭귄 종 분류 대시보드")
+    st.set_page_config(page_title="와인 품종 분류기", page_icon="🍷", layout="wide")
+    st.title("🍷 와인 품종 분류 대시보드")
     st.caption("RandomForest + Streamlit — 12~13강 혼동행렬·과적합 개념의 웹 버전")
 
     df = load_data()
@@ -144,7 +149,7 @@ def main():
     # [왜] train_model()이 cache_resource라 슬라이더가 이전과 같은 값 조합으로 돌아오면
     #      재학습 없이 캐시된 결과를 즉시 반환한다 — 여기서 초 단위 지연을 아낀다.
     out = train_model(df, model_type, n_estimators, max_depth)
-    model, le, cm = out["model"], out["le"], out["cm"]
+    model, classes, cm = out["model"], out["classes"], out["cm"]
 
     # [왜] EDA·모델 성능·예측을 탭으로 나눈다 — 세 관심사를 한 화면에 몰아넣으면
     #      스크롤이 길어지고 "지금 뭘 보는 화면인지" 놓치기 쉽다.
@@ -158,14 +163,14 @@ def main():
 
         st.subheader("두 변수 관계 살펴보기")
         # [왜] 두 selectbox를 columns(2)로 나란히 배치 — X·Y축을 자유롭게 조합해보며
-        #      어떤 특징 쌍이 종을 가장 잘 갈라놓는지 학생이 직접 탐색하게 한다.
+        #      어떤 특징 쌍이 품종을 가장 잘 갈라놓는지 학생이 직접 탐색하게 한다.
         col1, col2 = st.columns(2)
         x_axis = col1.selectbox("X축", FEATURES, index=0)
-        y_axis = col2.selectbox("Y축", FEATURES, index=2)
-        # [왜] hue="species"로 색을 종에 맞춰 자동 분리 — 점들이 뭉쳐 있으면 그 두 특징만으로는
-        #      종을 가르기 어렵다는 뜻이고, 갈라져 있으면 좋은 특징 조합이라는 뜻이다.
+        y_axis = col2.selectbox("Y축", FEATURES, index=3)
+        # [왜] hue="cultivar"로 색을 품종에 맞춰 자동 분리 — 점들이 뭉쳐 있으면 그 두 특징만으로는
+        #      품종을 가르기 어렵다는 뜻이고, 갈라져 있으면 좋은 특징 조합이라는 뜻이다.
         fig, ax = plt.subplots()
-        sns.scatterplot(data=df, x=x_axis, y=y_axis, hue="species", ax=ax)
+        sns.scatterplot(data=df, x=x_axis, y=y_axis, hue="cultivar", ax=ax)
         st.pyplot(fig)
         plt.close(fig)
 
@@ -183,11 +188,11 @@ def main():
 
         st.subheader("혼동행렬 (Confusion Matrix)")
         # [흐름] 13강에서 "오분류 이미지를 눈으로 확인하라"고 배운 것의 표 버전 —
-        #        어느 종끼리 헷갈리는지가 정확도 숫자 하나보다 훨씬 많은 정보를 준다.
+        #        어느 품종끼리 헷갈리는지가 정확도 숫자 하나보다 훨씬 많은 정보를 준다.
         fig, ax = plt.subplots()
         sns.heatmap(
             cm, annot=True, fmt="d", cmap="Blues",
-            xticklabels=le.classes_, yticklabels=le.classes_, ax=ax,
+            xticklabels=classes, yticklabels=classes, ax=ax,
         )
         # [왜] x축=예측, y축=실제로 라벨링 — sklearn confusion_matrix 기본 축 순서와
         #      맞춰야 "대각선=맞춘 것"이라는 해석이 어긋나지 않는다.
@@ -213,12 +218,8 @@ def main():
             st.bar_chart(perm_df)
             st.caption(
                 "중요도=예측 기여, 인과 아님. impurity 대신 held-out permutation을 쓴다. "
-                "단 permutation도 상관 특징끼리(flipper·body_mass)는 한쪽을 섞어도 나머지로 "
-                "모델이 맞혀 둘 다 과소평가될 수 있다 — 완벽한 도구가 아니라 impurity보다 정직한 근사다."
-            )
-            st.caption(
-                "⚠️ 상관 0.87은 세 종을 합쳤을 때 값 — 종 내부에서는 0.47~0.71로 더 약하다 "
-                "(Simpson's paradox: 그룹을 합치면 관계가 과장돼 보일 수 있음)."
+                "단 permutation도 상관 특징끼리는 한쪽을 섞어도 나머지로 모델이 맞혀 "
+                "둘 다 과소평가될 수 있다 — 완벽한 도구가 아니라 impurity보다 정직한 근사다."
             )
 
         # [왜] 두 모델을 비교(toggle)만 하고 끝내지 않는다 — "그래서 실무에선 어느 쪽?"에
@@ -230,26 +231,26 @@ def main():
         )
 
     with tab_pred:
-        st.subheader("새 펭귄 데이터로 예측")
-        # [왜] 4개 입력을 columns(2)로 2개씩 묶는다 — c1은 부리(길이·깊이), c2는
-        #      몸통(물갈퀴·체중) 관련 값이라 화면 세로 길이도 줄이고 관련 값끼리 붙여 보여준다.
+        st.subheader("새 와인 성분으로 품종 예측")
+        # [왜] 4개 입력을 columns(2)로 2개씩 묶는다 — 화면 세로 길이도 줄이고 관련
+        #      값끼리(도수/산도, 색상/폴리페놀) 붙여 보여준다.
         c1, c2 = st.columns(2)
-        bill_length = c1.number_input("부리 길이 (mm)", 30.0, 60.0, 45.0)
-        bill_depth = c1.number_input("부리 깊이 (mm)", 13.0, 22.0, 17.0)
-        flipper_length = c2.number_input("물갈퀴 길이 (mm)", 170.0, 235.0, 200.0)
-        body_mass = c2.number_input("체중 (g)", 2700.0, 6300.0, 4200.0)
+        alcohol = c1.number_input("알코올 도수 (%)", 11.0, 15.0, 13.0)
+        malic_acid = c1.number_input("말산 (malic acid)", 0.7, 5.8, 2.3)
+        color_intensity = c2.number_input("색상 강도", 1.0, 13.0, 5.0)
+        flavanoids = c2.number_input("플라보노이드", 0.3, 5.1, 2.0)
 
         # [흐름] ST1에서 배운 rerun 모델 그대로 — number_input 하나만 바꿔도 스크립트 전체가
         #        다시 실행되며 predict_proba가 즉시 갱신된다. 별도 "제출" 버튼이 필요 없다.
         X_new = pd.DataFrame(
-            [[bill_length, bill_depth, flipper_length, body_mass]], columns=FEATURES
+            [[alcohol, malic_acid, color_intensity, flavanoids]], columns=FEATURES
         )
         proba = model.predict_proba(X_new)[0]
         pred_idx = proba.argmax()
-        pred_species = le.classes_[pred_idx]
+        pred_cultivar = classes[pred_idx]
         confidence = proba[pred_idx]
 
-        st.success(f"예측 종: **{pred_species}** (확신도 {confidence:.1%})")
+        st.success(f"예측 품종: **{pred_cultivar}** (확신도 {confidence:.1%})")
 
         # [도전 과제 반영] 확신도가 낮으면 "애매한 경계 사례"임을 알려준다. 단 이 값은 보정된
         #      확률이 아니라 트리 투표 비율이라(아래 캡션), 70%라는 경계선은 절대 기준이 아니라 참고용 임계다.
@@ -259,10 +260,10 @@ def main():
                 "(70%는 통계적 보증이 아니라 참고용 임계선)."
             )
 
-        # [왜] 1등 종의 확률만 보여주지 않고 3종 전체를 막대그래프로 — 2등과의 격차가
+        # [왜] 1등 품종의 확률만 보여주지 않고 3종 전체를 막대그래프로 — 2등과의 격차가
         #      크지 않으면 "확신도 97%"도 사실 애매한 경계일 수 있음을 함께 드러낸다.
-        proba_df = pd.DataFrame({"species": le.classes_, "probability": proba}).set_index(
-            "species"
+        proba_df = pd.DataFrame({"cultivar": classes, "probability": proba}).set_index(
+            "cultivar"
         )
         st.bar_chart(proba_df)
         st.caption("트리 투표 비율일 뿐 보정된 확률 아님 — '97%면 97% 맞다'는 뜻 아님")
