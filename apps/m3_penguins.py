@@ -117,7 +117,7 @@ def main():
     # [왜] set_page_config는 스크립트 최상단에서 한 번만 호출 가능 — layout="wide"로
     #      탭·컬럼이 좁은 화면에서도 잘리지 않게 미리 넓게 잡아둔다.
     st.set_page_config(page_title="와인 품종 분류기", page_icon="🍷", layout="wide")
-    st.title("🍷 와인 품종 분류 대시보드")
+    st.title("와인 품종 분류 대시보드")
     st.caption("RandomForest + Streamlit — 12~13강 혼동행렬·과적합 개념의 웹 버전")
 
     df = load_data()
